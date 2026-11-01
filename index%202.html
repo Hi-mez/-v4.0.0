@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>名もなき兵士の記録</title>
+<style>
+:root{--bg:#2b2d22;--pn:#383b2c;--ln:#555944;--tx:#e4dfc8;--sub:#a29f86;--up:#8fbf7a;--dn:#c77b6a;--ac:#c9b97c}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--tx);font:15px/1.7 "Hiragino Mincho ProN","Yu Mincho",serif;display:flex;flex-direction:column;max-width:720px;margin:auto;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+#top{padding:6px 10px;background:var(--pn);border-bottom:1px solid var(--ln);font-size:12px}
+#top>div:first-child{display:flex;justify-content:space-between}
+#st{display:grid;grid-template-columns:repeat(4,1fr);gap:0 6px;color:var(--sub);font-size:11px;margin-top:2px}
+#st b{color:var(--tx);font-weight:normal}
+.bars i{display:inline-block;width:10px;height:6px;margin-right:1px}
+#bar{height:4px;background:var(--ln)}#bar i{display:block;height:100%;width:0;background:var(--ac)}
+#log{flex:1;overflow-y:auto;padding:8px 12px}
+.e{padding:6px 0;border-bottom:1px dotted var(--ln)}.e small{color:var(--sub)}
+.m{color:var(--ac);font-weight:bold;margin-top:12px;border-bottom:1px solid var(--ac)}
+.u{color:var(--up)}.d{color:var(--dn)}.x{color:var(--dn)}.lt{background:#33362a;padding:6px}
+#ch{background:var(--pn);border-top:1px solid var(--ln);padding:8px 10px;max-height:44vh;overflow-y:auto}
+button{font:inherit;background:#4a4e3a;color:var(--tx);border:1px solid var(--ln);border-radius:4px;padding:9px 10px;width:100%;text-align:left;margin-top:6px;cursor:pointer}
+button:active{background:#5c614a}button:disabled{opacity:.5}
+button small{display:block;color:var(--sub);font-size:12px}
+.lt button{width:auto;padding:3px 10px;font-size:13px}
+#ov{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center;padding:14px;z-index:9}
+#ovb{background:var(--pn);border:1px solid var(--ac);padding:18px;max-width:480px;width:100%;max-height:92vh;overflow:auto}
+#ovb h2{color:var(--ac);font-size:21px;margin-bottom:8px}
+.g{font-size:64px;text-align:center;background:#23251b;color:var(--ac);padding:6px;margin-bottom:10px}
+.rc{border:1px solid var(--ln);padding:8px;margin:8px 0;background:#2f3225;font-size:14px}
+#pz{width:auto;margin:0;padding:1px 8px;font-size:11px}.tb{flex:1;margin:0;padding:7px 2px;text-align:center;font-size:13px}#cs{position:fixed;inset:0;background:var(--bg);z-index:8;display:none;overflow:auto;padding:22px 14px;max-width:720px;margin:auto}#cs h2{color:var(--ac);margin-bottom:6px}
+details{font-size:12px;color:var(--sub);margin-top:10px}
+</style></head><body>
+<div id="top"><div><b id="dt">—</b><span id="who"></span><button id="pz" onclick="togglePz()" style="display:none">一時停止</button></div><div id="loc"></div><div id="st"></div></div>
+<svg id="map" viewBox="0 0 400 170" style="display:block;width:100%;height:19vh;background:#23251b"></svg><div id="bar"><i></i></div><div id="log"></div><div id="ch"></div>
+<div id="cs"></div><div id="ov"><div id="ovb"></div></div>
+<script>
+'use strict';
+/* ===== データ区分：historical(史実) / estimate(推定) / game(ゲーム設定) ===== */
+const D=(value,type,source,note)=>({value,type,source,note});
+const GM='開発側の仮設定',Y=(y,m)=>y*12+m-1,$=id=>document.getElementById(id);
+const ST=['身体','健康','判断','知識','協調','規律','忍耐','精神'],RK=['兵','上等兵','軍曹'];
+const TL={historical:'史実',estimate:'推定',game:'ゲーム設定'};
+const CFG={
+ reg:D([[['ロシア中央部','center'],30],[['ウクライナ','west'],22],[['ベラルーシ','west'],6],[['レニングラード周辺','leningrad'],4],[['ヴォルガ・ウラル','volga'],14],[['シベリア・極東','east'],9],[['中央アジア・カザフ','asia'],11],[['カフカス','caucasus'],4]],'game',GM,'出身地域の重み。1939年ソ連国勢調査で要再確認'),
+ yr:D([[1939,3],[1940,6],[1941,26],[1942,18],[1943,18],[1944,15],[1945,5]],'game',GM,'入隊年の重み。動員数を参考にした仮値、要再確認'),
+ job:D([['農民',50],['工場労働者',22],['学生',8],['職人',8],['事務員',6],['運転・鉄道',6]],'game',GM,'職業の重み。仮値'),
+ brw:D([['歩兵',50],['砲兵',12],['戦車兵',6],['工兵',8],['通信兵',6],['輸送兵',14],['対空兵',4]],'game',GM,'人員需要による兵科の重み。仮値'),
+ br:D({歩兵:1.3,砲兵:.8,戦車兵:1.1,工兵:1,通信兵:.7,輸送兵:.6,対空兵:.8},'game',GM,'兵科別の危険度係数'),
+ base:D(.013,'game',GM,'戦闘のある週の基礎死亡率。史実よりやや厳しめ'),
+ pow:D(.06,'game',GM,'不利な局面での週ごとの捕虜率'),
+ powd:D(.035,'game',GM,'捕虜の月間死亡率'),
+ fam:D({base:.0012,occ:.01,sg:.015,evac:.003},'game',GM,'家族の月間死亡率'),
+ sh:D({len:.0015,stl:.001,bor:.0008,sou:.0005},'game',GM,'物資不足による週間死亡率（戦役別）'),nc:D({cold:.0015,acc:.0004,wound:.05,sick:.06},'game',GM,'非戦闘死（寒冷・事故・負傷後・病気）の基礎率'),tl:D('主要戦役の開始・終了月','historical','各戦史（大枠。月単位は要再確認）','戦役の強度・初期戦況・捕虜条件はゲーム設定値'),
+ occ:D('1941-07〜1944-07','estimate','複数の戦史を参考','ウクライナ等の占領期間。地域差が大きい'),
+ siege:D('1941-09〜1944-01','historical','レニングラード包囲戦','開始と解除の時期（大枠）'),
+ pop:D('1939年人口 約1億7千万','estimate','1939年ソ連国勢調査（要原典確認）','定義未確認の参考値。生成には直接使用せず'),
+ loss:D('ソ連軍人の戦没は数百万人規模','estimate','Krivosheev編ほか（要再確認）','戦死・行方不明・捕虜死の定義で幅がある')
+};
+const W=[
+{id:'pol',n:'ポーランド東部への進駐',s:Y(1939,9),e:Y(1939,10),d:.4,l:7,t:'赤軍がポーランド東部へ進駐した。'},
+{id:'fin',n:'ソ連・フィンランド戦争',s:Y(1939,11),e:Y(1940,3),d:1.2,l:4,maj:1,t:'厳寒のカレリア地峡で戦闘が続く。'},
+{id:'bor',n:'独ソ戦の開始と国境の戦い',s:Y(1941,6),e:Y(1941,9),d:1.6,l:2,maj:1,pw:1,t:'ドイツ軍が侵攻し、西部の各戦線は後退を重ねている。'},
+{id:'len',n:'レニングラード包囲戦',s:Y(1941,9),e:Y(1944,1),d:.9,l:4,t:'レニングラードは包囲下にある。'},
+{id:'mos',n:'モスクワ攻防戦',s:Y(1941,10),e:Y(1942,1),d:1.5,l:4,maj:1,pw:1,t:'首都の前面で防衛戦が続き、冬に反攻が始まる。'},
+{id:'win',n:'1942年冬から春の攻勢',s:Y(1942,2),e:Y(1942,4),d:.8,l:5,t:'各戦線で冬季攻勢が続いている。'},
+{id:'sou',n:'1942年夏の南部戦線',s:Y(1942,5),e:Y(1942,7),d:1.2,l:3,pw:1,t:'南部でドイツ軍の攻勢が続き、戦線は後退した。'},
+{id:'stl',n:'スターリングラード攻防戦',s:Y(1942,8),e:Y(1943,2),d:2,l:4,maj:1,t:'市街で激しい戦闘が続く。のち包囲反攻が行われる。'},
+{id:'lul',n:'戦線の小康',s:Y(1943,3),e:Y(1943,6),d:.5,l:6,t:'春のぬかるみで、主要戦線は比較的静かになる。'},
+{id:'kur',n:'クルスクの戦い',s:Y(1943,7),e:Y(1943,8),d:1.6,l:6,maj:1,t:'クルスク周辺で大規模な戦車戦が行われる。'},
+{id:'dnp',n:'ドニエプルの戦い',s:Y(1943,9),e:Y(1944,5),d:1.1,l:6,t:'赤軍の前進が続き、ウクライナの解放が進む。'},
+{id:'bag',n:'バグラチオン作戦',s:Y(1944,6),e:Y(1944,8),d:1.3,l:7,maj:1,t:'ベラルーシで大規模な攻勢が始まる。'},
+{id:'eeu',n:'東欧での進撃',s:Y(1944,9),e:Y(1944,12),d:1.1,l:7,t:'赤軍は東欧へ進み、戦闘が続く。'},
+{id:'ber',n:'ヴィスワ・オーデル作戦とベルリンの戦い',s:Y(1945,1),e:Y(1945,5),d:1.5,l:7,maj:1,t:'ドイツ本土へ攻め入り、ベルリンへ向かう。'}];
+const ET={center:[[['ロシア人','ru'],92],[['タタール人','ru'],8]],west:[[['ウクライナ人','ru'],70],[['ベラルーシ人','ru'],20],[['ロシア人','ru'],10]],leningrad:[[['ロシア人','ru'],100]],volga:[[['ロシア人','ru'],65],[['タタール人','as'],20],[['バシキール人','as'],15]],east:[[['ロシア人','ru'],90],[['ヤクート人','as'],10]],asia:[[['カザフ人','as'],45],[['ウズベク人','as'],45],[['ロシア人','ru'],10]],caucasus:[[['グルジア人','as'],35],[['アルメニア人','as'],30],[['アゼルバイジャン人','as'],35]]};
+const NM={ru:[['イワン','ピョートル','ニコライ','アレクセイ','ドミトリー','ワシーリー','ミハイル','セルゲイ','フョードル'],['ペトロフ','イワノフ','ソコロフ','クズネツォフ','ポポフ','ワシリエフ','モロゾフ','ボロトニコフ']],as:[['ヌルラン','アスカル','ラヒム','ティムール','ダヴィト','アルセン'],['ベコフ','アリエフ','ハサノフ','ナザロフ','ミナシヴィリ']]};
+const PS={慎重:{判断:6,規律:4},社交的:{協調:8},頑固:{忍耐:6,協調:-4},朗らか:{精神:6},内向的:{知識:4,協調:-4},勤勉:{規律:6,忍耐:3}};
+const JB={農民:{身体:6,忍耐:6,知識:-4},工場労働者:{身体:3,規律:4,知識:2},学生:{知識:12,身体:-4},職人:{判断:3,身体:2},事務員:{知識:8,身体:-3},'運転・鉄道':{判断:4,規律:2}};
+const TX={rear:['朝の点呼のあと、半日、行軍の訓練が続いた。','黒パンとスープを、仲間と分け合って食べた。','夜、毛布にくるまり、故郷の話をした。','靴の手入れに追われた一週間だった。','何も起こらない一週間だった。','配給の煙草を巡って小さな言い合いがあった。','雨で訓練が中止になり、兵舎で一日を過ごした。'],
+drill:['射撃と行軍の訓練を重ねた。','同じ訓練を何度も繰り返した。'],rest:['久しぶりに、ゆっくり眠れた。'],bond:['隊の仲間と、乏しい食料を分け合った。'],study:['古い新聞を読み返した。','隊の識字講習を手伝った。'],
+front:['前線は静かで、塹壕の補修が続いた。','砲声が遠くで鳴っていた。','冷たいスープが一日一度だけ届いた。','夜通し見張りに立った。','戦闘はなく、隊は待機した。'],
+hosp:['病床で天井を眺めて過ごした。','同室の兵と短い言葉を交わした。'],pow:['収容所で労役が続いた。','わずかな粥だけで過ごした。'],
+hi:['攻撃に加わり、隊は目標を確保した。','持ち場を守り抜いた。'],lo:['敵の圧力が強く、隊は後退した。','弾薬が乏しい中、持ち場を保った。'],mid:['一進一退の戦闘が続いた。','夜間に陣地を移動した。']};
+const LT={n:['畑は今年も何とか実りそうだ。皆、変わりなく暮らしている。','仕事は忙しいが、元気にしている。体に気をつけなさい。','近所の子が大きくなった。夕飯のたびにお前の席を思い出す。'],ev:['疎開先の暮らしにはまだ慣れないが、皆で何とかやっている。','慣れない土地で働いている。便りをありがとう。'],sg:['パンの配給が減った。それでも皆、何とか持ちこたえている。','寒さが厳しい。薪が足りないが、心配はいらない。']};
+const RP={慎重:'こちらは変わりない。無理はせず、体を大事にしてほしい。',社交的:'仲間もできた。心配ないよ。皆によろしく。',頑固:'元気だ。余計な心配はいらない。',朗らか:'こっちは元気にやっている。飯もなんとか食えている。',内向的:'無事でいる。また書く。',勤勉:'務めは果たしている。そちらも仕事に励んでほしい。'};
+const RS={home:'自宅',evac:'避難中',occ:'占領下',sg:'包囲下'},fs=m=>m.alive?'生存・'+RS[m.res]:'死亡';
+const POL=[['生活','rest','休養する','疲れが抜ける',[0,1,2,3]],['生活','eat','食事をしっかりとる','健康が保たれる',[0,1,2,3]],['生活','tidy','身の回りを整える','規律が身につく',[1,2,3]],
+['訓練','study','勉強する','知識が増える',[0,1,2]],['訓練','chore','家の手伝い','体と忍耐が育つ',[0,1,2]],['訓練','drill','体力訓練','身体が鍛えられる',[1,2,3]],['訓練','shoot','射撃訓練','判断力が磨かれる',[3]],['訓練','learn','軍事学習','知識が増える',[3]],
+['交流','play','友達と遊ぶ','精神が安定する',[0,1]],['交流','bond','仲間・友人と話す','関係が深まる',[1,2,3]],
+['行動','read','読書','知識が増える',[1,2,3]],['行動','work','仕事に励む','規律が身につく',[2]],['行動','careful','慎重に動く','危険は減るが、評価は伸びにくい',[3]],['行動','bold','任務に志願する','評価は上がるが危険も増す',[3]],['行動','help','仲間を助ける','仲間との関係が深まる',[3]],
+['手紙','wr','家族へまめに書く','返信を自動で書く。心が安らぐ',[1,2,3]],['手紙','nw','必要なときだけ書く','返信は自分で選ぶ',[1,2,3]]];
+const PE={rest:{健康:1},eat:{健康:1},tidy:{規律:1},study:{知識:1},chore:{忍耐:1},drill:{身体:1},shoot:{判断:1},learn:{知識:1},play:{精神:1},bond:{協調:1},read:{知識:1},work:{規律:1},help:{協調:1},wr:{精神:1}};
+Object.assign(TX,{chore:['畑や家の仕事を手伝った。'],play:['日が暮れるまで遊んだ。'],eat:['食事を落ち着いて取れた。'],tidy:['装備や身の回りを整えた。'],shoot:['射撃訓練を重ねた。'],learn:['地図の読み方を学んだ。'],read:['本を読んで過ごした。'],work:['仕事に励んだ週だった。'],help:['疲れた仲間の荷を持った。'],wr:['家族への手紙を書いた。']});
+const LE=[[['冬、高熱を出して寝込んだ。回復したが体は少し弱くなった。',{健康:-2}],['母の背中に負われて、畑まで連れて行かれた。',{精神:1}],['近所の子と遊ぶようになった。',{協調:1}],['食べ物の少ない冬を越した。',{忍耐:1,健康:-1}]],
+[['学校に通い、文字を覚えた。',{知識:2}],['家の仕事を手伝い、手に豆ができた。',{身体:1,忍耐:1}],['友人と川で遊び、日が暮れるまで帰らなかった。',{協調:1,精神:1}],['父に叱られ、黙って夕食を食べた。',{規律:1}]],
+[['初めて稼ぎの一部を家に入れた。',{精神:1,規律:1}],['友人たちと将来の話をした。',{協調:1}],['新聞の見出しを読んだ。国外では戦争の気配が強まっている。',{知識:1}],['重い荷を運び、翌日は動けなかった。',{身体:1,健康:-1}]]];
+const MP={pol:[52,82],fin:[100,28],bor:[62,80],len:[95,45],mos:[120,70],win:[110,80],sou:[115,115],stl:[150,112],lul:[110,100],kur:[105,88],dnp:[85,100],bag:[68,72],eeu:[40,80],ber:[25,78]},HM={center:[125,78],west:[82,98],leningrad:[95,48],volga:[170,90],east:[340,85],asia:[220,128],caucasus:[135,135]};
+const lc=v=>v<=2?'#d04a3a':v<=4?'#e08a3a':v<=6?'#d8c840':v<=8?'#a8cc4a':'#4fb860';
+function mapUpd(){let f=H.ev&&!H.pow&&H.hosp<=0,q=f?MP[H.ev.id]:H.pow?[45,82]:HM[H.rk],d=$('dot');if(!d)return;d.setAttribute('cx',q[0]+(f?H.jx||0:0));d.setAttribute('cy',q[1]+(f?H.jy||0:0));d.setAttribute('fill',f?lc(H.loc):'#9a9a88')}
+/* ===== 乱数は R に集約 ===== */
+const R={i:(a,b)=>a+Math.floor(Math.random()*(b-a+1)),c:p=>Math.random()<p,p:a=>a[Math.floor(Math.random()*a.length)],w:a=>{let r=Math.random()*a.reduce((s,x)=>s+x[1],0);for(const x of a){if((r-=x[1])<0)return x[0]}return a[a.length-1][0]}};
+let H=null,ui={phase:'title',done:{}},Q=[];
+const dstr=t=>`${Math.floor(t/12)}年${t%12+1}月`,lab=v=>v<30?'低い':v<45?'やや低':v<60?'平凡':v<75?'良好':'優秀';
+const nm=k=>R.p(NM[k][0])+'・'+R.p(NM[k][1]);
+const active=t=>W.filter(e=>t>=e.s&&t<=e.e);
+function chg(o){if(H.end)return '';let s='';for(const k in o){let b=H.st[k],n=Math.max(0,Math.min(100,b+o[k])),d=n-b;H.st[k]=n;if(d)s+=` <span class="${d>0?'u':'d'}">${k} ${d>0?'+':'−'}${Math.abs(d)}</span>`}hud();return s?`<br><small>${s}</small>`:''}
+function L(h,c){let g=$('log'),near=g.scrollHeight-g.scrollTop-g.clientHeight<80,d=document.createElement('div');d.className='e '+(c||'');d.innerHTML=h;g.appendChild(d);if(near)g.scrollTop=g.scrollHeight}
+function hud(){if(!H)return;let y=Math.floor(H.ym/12),m=H.ym%12+1,a=y-H.by-(m<H.bm?1:0);$('dt').textContent=`${y}年${m}月`;$('who').textContent=`${H.nm}（${a}歳）${H.pow?'捕虜':(H.br||'未配属')+' '+RK[H.rank]}`;
+ let l=$('loc'),v=H.loc;
+ if(H.pow)l.textContent='現場：収容所';else if(H.hosp>0)l.textContent='現場：病院';else if(H.ev)l.innerHTML=`現場：${H.ev.n} <span class="bars">${[...Array(10)].map((_,i)=>`<i style="background:${i<v?lc(v):'#4a4d3b'}"></i>`).join('')}</span> ${['非常に不利','不利','互角','有利','非常に有利'][Math.ceil(v/2)-1]}`;else l.textContent='現場：後方（訓練・待機）';
+ mapUpd();$('st').innerHTML=ST.map(k=>`<span>${k} <b>${H.st[k]}</b> ${lab(H.st[k])}</span>`).join('')}
+const bar=()=>$('bar').firstElementChild.style.width=((ui.dur-ui.rem)/ui.dur*100)+'%';
+/* ===== 主人公生成 ===== */
+function mkComp(){return{n:nm('ru'),rel:R.i(35,55),s:'ok'}}
+function gen(){
+ let [rn,rk]=R.w(CFG.reg.value),[en,nk]=R.w(ET[rk]),ey=R.w(CFG.yr.value),em=ey==1945?R.i(1,4):R.i(1,12),a=R.w([[R.i(18,22),50],[R.i(23,30),35],[R.i(31,38),15]]),bm=R.i(1,12),by=ey-a-(bm>em?1:0);
+ let job=R.w(CFG.job.value);if(rk=='leningrad'&&R.c(.6))job='工場労働者';if(a<=19&&R.c(.3))job='学生';
+ let edu=job=='学生'?'中等教育在学':job=='農民'?R.w([['初等教育程度',45],['簡単な読み書き程度',40],['ほぼ読み書きできない',15]]):R.w([['初等教育修了',50],['中等教育修了',40],['技術学校修了',10]]);
+ let ps=R.p(Object.keys(PS)),em2=edu=='ほぼ読み書きできない'?-12:edu=='簡単な読み書き程度'?-5:0,st={};
+ ST.forEach(k=>st[k]=Math.max(10,Math.min(90,50+R.i(-8,8)+(JB[job][k]||0)+(PS[ps][k]||0)+(k=='知識'?em2:0))));
+ let fam=[];if(R.c(.9))fam.push('父');if(R.c(.95))fam.push('母');for(let i=R.w([[0,1],[1,3],[2,3],[3,2]]);i>0;i--)fam.push(R.p(['兄','弟','姉','妹']));
+ let late=[];if(a>=23&&R.c(.5)){late.push('妻');if(R.c(.6))late.push('子')}
+ let enl=Y(ey,em),dy=R.w([[1941,5],[1942,9],[1943,11],[1944,12],[1945,10],[1946,5]]);dy=Math.max(ey,dy);let deathAt=dy==ey?R.i(enl,Y(dy,12)):Y(dy,R.i(1,12));deathAt=Math.max(enl+1,deathAt);
+  return{nm:nm(nk),rn,rk,eth:en,by,bm,bd:R.i(1,28),job,edu,pers:ps,st,ey,em,ym:Y(by,bm),enl,deathAt,kills:0,tanks:0,aircraft:0,battleCount:0,stg:-1,sp:12,pol:{},late,br:null,rank:0,ev:null,loc:5,hosp:0,train:0,pow:false,fx:[],letters:[],seen:{},served:0,lw:0,hw:0,end:null,fe:R.c(.4),
+  fam:fam.map(r=>({rel:r,alive:true,res:'home',rep:true})),comp:[mkComp(),mkComp(),mkComp()]}}
+/* ===== 進行 ===== */
+function start(){clearInterval(ui.tm);Q=[];$('log').innerHTML='';$('ov').style.display='none';$('cs').style.display='none';ui={phase:'choice',done:{},hold:false};H=gen();
+ $('ch').innerHTML='<div style="display:flex;gap:4px">'+['生活','訓練','交流','行動','手紙'].map(c=>`<button class="tb" onclick="polScreen('${c}')">${c}</button>`).join('')+'</div>';
+ L('<b>この人物は、第二次世界大戦の時代を生き、やがて命を落とす。</b><br><small>いつ、どこでかは、まだ誰にも分からない。</small>');
+ L(`<b>【誕生】</b>${H.by}年${H.bm}月、${H.rn}に${H.eth}の子として生まれた。名は${H.nm}。家族は${H.fam.map(m=>m.rel).join('・')||'いない'}。性格は${H.pers}。`);hud();beginMonth()}
+function beginMonth(){let s=H.ym>=H.enl?3:(()=>{let m=Math.floor(H.ym/12),a=m-H.by-(H.ym%12+1<H.bm?1:0);return a<7?0:a<15?1:2})();
+ if(s!==H.stg){H.stg=s;L(['幼少期','少年期','青年期・戦争前','従軍'][s],'m');if(s==2)L(`${H.job}として働き（または学び）始めた。${H.edu}。`);syncPol()}
+ H.sp=s==3?1:Math.max(1,Math.min(s<2?12:3,H.enl-H.ym));
+ L(dstr(H.ym),'m');let a=active(H.ym);if(s==3||a.length)L(`<small>【歴史】${a.length?a.map(e=>e.t).join(' '):'大きな戦闘の報せはない。'}</small>`);
+ $('pz').style.display='none';let c=mkChoice();if(c)showChoice(c);else go();flush()}
+function showChoice(c){ui.ch=c;ui.phase='choice';$('cs').innerHTML=`<h2>${c.t}</h2><p>${c.x}</p>`+c.o.map((o,i)=>`<button onclick="pickC(${i})">${o.t}${o.h?`<small>${o.h}</small>`:''}</button>`).join('');$('cs').style.display='block'}
+function pickC(i){if(ui.phase!=='choice')return;let o=ui.ch.o[i];ui.phase='turn';$('cs').style.display='none';let s=o.s?chg(o.s):'';L(`▶ ${o.t}`+s);if(o.run)o.run();hud();go()}
+function mkChoice(){
+ if(H.ym==H.enl&&!H.br)return{t:'徴兵・入隊',x:`${dstr(H.ym)}、召集された。配属の希望を問われた。`,o:['歩兵','砲兵','工兵','通信兵','輸送兵','対空兵'].map(b=>({t:b,h:{歩兵:'数が多く、前線に出る機会も多い',砲兵:'後方寄りだが砲撃にさらされる',工兵:'陣地構築や架橋などの作業が多い',通信兵:'連絡任務。読み書きが役立つ',輸送兵:'補給と運搬。前線に出る機会は比較的少ない',対空兵:'対空監視と防空任務にあたる'}[b],run:()=>{H.br=R.c(.5)?b:R.w(CFG.brw.value);H.train=2;H.late.forEach(r=>H.fam.push({rel:r,alive:true,res:'home',rep:true}));H.late=[];L(`配属は<b>${H.br}</b>。`+(H.br==b?'希望が通った。':'人員の都合で、希望とは異なる配属になった。'))}}))};
+ if(H.rank<2&&H.served>=6&&R.c(.25))return{t:'昇進の話',x:'上官から、一つ上の階級を打診された。',o:[{t:'受ける',h:'責任が増し、危険も増す',s:{規律:1,判断:1},run:()=>{H.rank++;syncFx();L(`<b>${RK[H.rank]}</b>に昇進した。`)}},{t:'断る',h:'今までどおりの立場にとどまる',s:{協調:1}}]};
+ return null}
+function go(){ui.dur=H.sp==1?8000:H.sp==3?4000:3000;ui.nw=H.sp==1?4:1;ui.wk=0;ui.rem=ui.dur;ui.phase='progress';bar();$('pz').style.display='';pzl();startTick()}
+function pzl(){$('pz').textContent=ui.hold?'再開':'一時停止'}
+function togglePz(){if(ui.phase!=='progress')return;ui.hold=!ui.hold;pzl()}
+function syncFx(){H.fx=Object.values(H.pol).filter(x=>x).concat(H.rank>0?['lead']:[]).map(t=>({tag:t,left:9}))}
+function syncPol(){['生活','訓練','交流','行動','手紙'].forEach(c=>{let o=POL.filter(p=>p[0]==c&&p[4].includes(H.stg));if(!o.some(p=>p[1]==H.pol[c]))H.pol[c]=o.length?o[0][1]:null});syncFx()}
+function polScreen(c){if(!H||H.end||ui.phase!=='progress')return;ui.hb=ui.hold;ui.hold=true;pzl();let o=POL.filter(p=>p[0]==c&&p[4].includes(H.stg));
+ $('cs').innerHTML=`<h2>${c}</h2><small>選んだ方針は、変更するまで続く。時間は止まっている。</small>`+(o.length?o.map(p=>`<button onclick="setPol('${c}','${p[1]}')">${H.pol[c]==p[1]?'● ':''}${p[2]}<small>${p[3]}</small></button>`).join(''):'<p>今の年齢では、選べる方針はまだない。</p>')+'<button onclick="csClose()">閉じる</button>';$('cs').style.display='block'}
+function setPol(c,id){if(H.end)return;H.pol[c]=id;syncFx();L(`<small>方針【${c}】${POL.find(p=>p[1]==id)[2]}</small>`);csClose()}
+function csClose(){$('cs').style.display='none';ui.hold=ui.hb;pzl()}
+function polWeek(p){let t=R.p(Object.values(H.pol).filter(x=>x&&PE[x]));if(!t||R.c(.4))return;if(t=='bond'||t=='help')H.comp.forEach(c=>{if(c.s=='ok')c.rel=Math.min(100,c.rel+2)});L(p+R.p(TX[t])+chg(PE[t]))}
+function startTick(){clearInterval(ui.tm);ui.tm=setInterval(tick,200)}
+function tick(){try{if(ui.phase!=='progress'||ui.hold)return;ui.rem-=200;bar();let w=Math.min(ui.nw,Math.floor((ui.dur-ui.rem)/(ui.dur/ui.nw)));
+ while(ui.wk<w){ui.wk++;week(ui.wk);flush();if(ui.phase!=='progress')return}
+ if(ui.rem<=0){clearInterval(ui.tm);endMonth()}}catch(e){fail(e)}}
+function week(w){let k=H.ym+'-'+w;if(ui.done[k]||H.end)return;ui.done[k]=1;
+ H.letters.forEach(l=>{if(!l.dl&&(l.at<H.ym||l.at==H.ym&&l.w<=w))deliver(l)});
+ let p=H.sp>1?'':`<small>第${w}週</small> `;
+ if(H.stg<3){if(R.c(.7)){let e=R.p(LE[H.stg]);L(p+e[0]+chg(e[1]))}polWeek(p);return}
+ if(H.hosp<=0&&hz())return;if(H.pow){L(p+R.p(TX.pow));ill();return}
+ if(H.hosp>0){if(R.c(.7))L(p+R.p(TX.hosp));return}
+ if(R.c(.3))polWeek(p);
+ if(H.ev)return front(w,p);
+ if(R.c(.25)){ill();return}
+ L(p+R.p(TX.rear));if(R.c(.03)){let c=H.comp.find(x=>x.s=='ok');if(c){c.s='moved';L(`<small>${c.n}は別の部隊へ転属になった。</small>`)}}ill()}
+function ill(){if(H.end||H.sick)return;let m=H.ym%12,w=m>=10||m<=2;if(R.c(.02*(w?1.6:1)*(1.3-H.st.健康/100)*(H.pow?2:1))){let n=w?R.w([['肺炎',3],['発疹チフス',H.ym<Y(1944,1)?1:.3]]):R.w([['赤痢',3],['肺炎',1]]);H.sick={n,ym:H.ym};H.il=(H.il||0)+1;L(`<small>疾病</small> ${n}にかかった。`+chg({健康:-R.i(2,5)}));if(R.c(.5))H.hosp=Math.max(H.hosp,1)}}
+function hz(){if(H.end)return 0;let m=H.ym%12,wn=m>=10||m<=2,h=1.3-H.st.健康/100,e=H.ev,N=CFG.nc.value,x=Math.random(),c=wn&&(e||H.pow)?N.cold*h*(H.pow?3:1)*(H.loc<=3?1.5:1):0,f=((e&&CFG.sh.value[e.id])||0)*h+(H.pow?.002:0),a=N.acc*(H.br=='輸送兵'?3:1);
+ if(x<c){die('寒冷');return 1}if(x<c+f){die('飢餓');return 1}if(x<c+f+a){die('事故');return 1}return 0}
+function prog(){let N=CFG.nc.value,h=1.3-H.st.健康/100;
+ if(H.wound){if(R.c(N.wound*h)){die('負傷後');return 1}if(H.hosp<=0){L('<small>傷はふさがった。</small>');H.wound=null}}
+ if(H.sick){if(R.c(N.sick*h*(H.pow?2:1))){die('病気');return 1}if(R.c(.45)){L(`<small>${H.sick.n}から回復した。</small>`);H.sick=null}else L(`<small>${H.sick.n}が長引いている。</small>`+chg({健康:-1}))}
+ return 0}
+function wpn(){let e=H.ev,b=H.br,ym=H.ym,fin=e&&e.id=='fin',pl=e&&e.id=='pol',en=fin?'フィンランド軍':pl?'ポーランド軍':'敵軍',g=!fin&&!pl,n=R.c(.35);
+ let k=R.w([['gun',3],['shell',b=='砲兵'?4:3],['air',b=='輸送兵'?3:1],['mine',b=='工兵'?3:.7],['tank',g&&ym>=Y(1941,6)?(b=='戦車兵'?3:1):0],['fr',.15]]);
+ if(k=='gun')return{cause:'銃撃',wp:n&&g?(R.c(.5)?'Karabiner 98k（小銃）':(ym<Y(1942,1)?'MG 34':'MG 42')+'（機関銃）'):en+'の小火器',side:en};
+ if(k=='shell')return{cause:'砲撃',wp:en+'の'+R.p(['迫撃砲','野砲']),side:en};
+ if(k=='air')return{cause:'爆撃',wp:n&&g&&ym<Y(1944,1)?'Ju 87（急降下爆撃機）':en+'の航空機',side:en};
+ if(k=='mine')return{cause:'地雷',wp:'地雷',side:en};
+ if(k=='tank')return{cause:'戦車砲撃',wp:n?'Panzer IV':'敵軍の戦車',side:'敵軍'};
+ return{cause:'誤射',wp:'味方の砲',side:'味方（誤射）'}}
+function roleAct(){let b=H.br,w=H.st,cm=H.comp.find(c=>c.s=='ok'&&c.rel>=60),f=w.精神<42||w.規律<40,bd=H.fx.some(x=>x.tag=='bold')?2:0,cr=H.fx.some(x=>x.tag=='careful')?2:0,l=H.loc;
+ let o=[['味方の陣地を守ろうとしていた','それが与えられた持ち場だったからだ',2],['命令に従って持ち場に向かっていた','上官の命令だった',2],['敵の攻撃から身を守ろうとしていた','他にできることがなかったからだ',1+cr],['部隊の移動に同行していた','隊とともに移動する命令が出ていたためだった',2]];
+ if(l>=5)o.push(['敵の塹壕への攻撃に参加していた','攻撃命令が下りたためだった',2+bd]);
+ if(l<=4||f)o.push(['戦闘の混乱の中で退却しようとしていた',f?'恐怖と疲労で、持ち場にとどまれなかったからだ':'隊の後退に従ったためだった',l<=4?3:1]);
+ if(cm){o.push(['退却する仲間を援護していた',cm.n+'を見捨てられなかったからだ',3]);o.push(['負傷した仲間を救助しようとしていた',cm.n+'の呼ぶ声が聞こえたからだ',2])}
+ if(b=='通信兵')o.push(['通信線を維持する任務に就いていた','連絡が途絶えれば隊が孤立するためだった',4]);
+ if(b=='輸送兵')o.push(['物資の輸送任務に就いていた','前線で弾薬と食料が必要とされていたためだった',4]);
+ if(b=='工兵')o.push(['陣地の構築作業に当たっていた','期限が迫っていたからだ',3]);
+ if(b=='砲兵')o.push(['砲の持ち場で任務に就いていた','射撃命令が続いていたためだった',3]);
+ return R.w(o.map(a=>[a,a[2]]))}
+function front(w,p){let e=H.ev;H.loc=Math.max(1,Math.min(10,H.loc+R.p([-1,0,0,0,1])));hud();
+ if(!R.c(Math.min(.8,.35*e.d))){if(R.c(.7))L(p+R.p(TX.front));ill();return}
+ let a=(H.st.身体+H.st.判断+H.st.精神)/300,m=(1.15-a*.3)*(11-H.loc)/5.5;H.fx.forEach(f=>m*=({careful:.8,bold:1.3,lead:1.15}[f.tag]||1));
+ if(H.comp.some(c=>c.s=='ok'&&c.rel>=65))m*=.85;
+ let q=CFG.base.value*e.d*CFG.br.value[H.br]*m,r=Math.random();
+ H.comp.forEach(c=>{if(c.s=='ok'&&R.c(q*1.1)){c.s='dead';L(`${p}${c.n}が戦死した。`,'x');if(c.rel>=50)Q.push({g:'訃',h:`${c.n}の死`,t:`${c.n}は${e.n}の戦闘で亡くなった。同じ隊で、食料も寒さも分け合った仲間だった。`,d:{精神:-5}});else L(`<small>${chg({精神:-2})}</small>`)}else if(c.s=='ok'&&R.c(q*2)){c.s='wounded';L(`<small>${c.n}が負傷し、後送された。</small>`)}});
+ if(r<q){die('戦闘');return}
+ if(e.pw&&H.loc<=3&&R.c(CFG.pow.value)){H.pow=H.wp=true;H.ev=null;L(p+'包囲され、降伏を余儀なくされた。','x');Q.push({g:'虜',h:'捕虜となる',t:`${e.n}の混乱の中、${H.nm}は捕らえられた。収容所への移動が始まる。`,d:{精神:-6,健康:-4}});hud();return}
+ if(r<q*3.5){if(R.c(.35)){H.hosp=R.i(2,3);H.hw++;H.wound={ym:H.ym,w:wpn().wp};L(p+'砲弾の破片を受け、重傷を負った。','x');Q.push({g:'傷',h:'重傷',t:`${H.nm}は後送され、数か月の療養に入った。仲間の顔が遠ざかっていく。`,d:{健康:-R.i(8,15),身体:-R.i(2,5)}})}else{H.lw++;L(p+'破片で負傷した。軽傷だった。'+chg({健康:-R.i(2,5)}))}return}
+ let s=H.loc>=7?TX.hi:H.loc<=4?TX.lo:TX.mid;L(p+R.p(s)+(R.c(.4)?chg({精神:-1}):''));
+  // 個人戦果は任務・兵科・能力・戦況をもとに控えめに記録する。部隊戦果とは分ける。
+  let skill=(H.st.判断+H.st.知識+H.st.協調)/300, chance=Math.max(.04,Math.min(.32,.10+skill*.12+(H.loc>=7?.05:0)));
+  if(R.c(chance)){H.kills++;L(`<small>戦果記録：敵兵への戦果1（個人記録）</small>`)}
+  if((H.br=='戦車兵'||H.br=='砲兵'||H.br=='工兵')&&R.c(.035+skill*.035)){H.tanks++;L(`<small>戦果記録：敵戦車・装甲車への戦果1（部隊任務への関与）</small>`)}
+  if(H.br=='対空兵'&&R.c(.045+skill*.04)){H.aircraft++;L(`<small>戦果記録：敵航空機への戦果1（防空任務への関与）</small>`)}
+  ill()}
+function die(cat){if(H.end)return;clearInterval(ui.tm);Q=[];let e=H.ev||active(H.ym)[0],pl=H.pow?'捕虜収容所':e?e.n:'後方',cm=H.comp.find(c=>c.s=='ok'&&c.rel>=60),m=H.ym%12,wn=m>=10||m<=2,k=null,a,y,hw,sit='',pw=H.pow?'収容中に':'';
+ if(cat=='戦闘'){k=wpn();[a,y]=roleAct();sit=H.loc<=3?'戦況は非常に不利で、隊は圧力を受けていた。':H.loc>=7?'戦況は味方に有利だった。':'一進一退の戦闘が続いていた。';hw=`${k.wp}による${k.cause}を受け、死亡した`}
+ else if(cat=='負傷後'){a=R.p(['病床で回復を待っていた','傷の痛みに耐えながら横になっていた']);y='傷は癒えたかに見えたが、容体は急に悪化した';let w=H.wound?H.wound.w:'砲弾の破片';hw=`${w}による傷が悪化し、${R.p(['感染症','容体の悪化'])}のため死亡した`;sit='療養が続いていた。';k={wp:H.wound?H.wound.w:'',side:'敵軍'}}
+ else if(cat=='病気'){let n=H.sick?H.sick.n:'肺炎';[a,y]=H.pow?['収容所で生き延びようとしていた','仲間と粥を分け合いながら、その日を越えようとしていた']:cm?['仲間に自分を置いていくよう頼んだ','足手まといになりたくなかったからだ']:['高熱で動けなくなっていた','体力が尽きかけていたからだ'];hw=`${pw}${n}が悪化し、死亡した`;sit=wn?'厳しい寒さが続いていた。':''}
+ else if(cat=='寒冷'){[a,y]=H.pow?['収容所で寒さに耐えていた','防寒の衣服がなかったからだ']:R.p([['歩哨に立ち続けていた','交代が来なかったからだ'],['行軍の列から遅れ、雪の中で動けなくなった','寒さと疲労で足が進まなかったからだ']]);hw=`${pw}${R.p(['凍死','低体温症'])}により死亡した`;sit='厳しい寒さが続いていた。'}
+ else if(cat=='飢餓'){[a,y]=H.pow?['収容所で生き延びようとしていた','わずかな粥を分け合いながら過ごしていた']:['食料を探しに出ていた','配給が途絶えていたためだった'];hw=`${pw}${R.p(['飢餓','栄養失調','脱水'])}により死亡した`;sit='食料が不足していた。'}
+ else{let t=R.p(['車両事故','輸送中の事故','火災','建物の崩壊']);[a,y]=['移動の任務に就いていた','隊とともに移動する命令が出ていたためだった'];hw=`${t}に巻き込まれ、死亡した`;k={wp:H.br=='戦車兵'&&t=='車両事故'&&H.ym>=Y(1941,1)?'T-34':'',side:'事故'}}
+ H.end={t:'death',ym:H.ym,d:R.i(1,28),pl,cat,a,y,hw,wp:k?k.wp:'',side:k?k.side||'':'',txt:`${Math.floor(H.ym/12)}年${m+1}月、${pl}。${sit}${H.nm}は${a}。${y}。${hw}。`};
+ L(`<b>${dstr(H.ym)}、${H.nm}は死亡した。</b>`,'x');ending()}
+function deliver(l){l.dl=1;let auto=H.pol['手紙']=='wr';if(auto)l.rp=1;let m=l.f,un=H.fam.filter(x=>!x.alive&&!x.rep),i=H.letters.indexOf(l);
+ L(`✉ ${m.rel}より：「${l.tx=R.p(m.res=='sg'?LT.sg:m.res=='evac'?LT.ev:LT.n)}」${auto?'':`<br><button data-r="${i}">返信を書く</button>`}`,'lt');
+ if(auto)L(`<small>返信</small> 「${RP[H.pers]}」`+chg({精神:1}),'lt');if(un.length){un.forEach(x=>x.rep=true);Q.push({g:'訃',h:'家族からの知らせ',t:`手紙の終わりに、${un.map(x=>x.rel).join('と')}が亡くなったと記されていた。`,d:{精神:-5}})}}
+$('log').onclick=e=>{let b=e.target.closest('button[data-r]');if(!b||b.disabled||!H||H.end)return;let l=H.letters[b.dataset.r];if(!l||l.rp)return;l.rp=1;b.disabled=true;b.textContent='返信済み';L(`<small>返信</small> 「${RP[H.pers]}」`+chg({精神:1}),'lt')};
+function deadlineDeath(){
+  // 死亡期限は開始時に決定済み。既に存在する負傷・疾病・捕虜状態を優先し、存在しない病歴を後付けしない。
+  if(H.sick){die('病気');return}
+  if(H.wound){die('負傷後');return}
+  if(H.pow){die('飢餓');return}
+  if(H.ev&&active(H.ym).includes(H.ev)){die('戦闘');return}
+  // 期限日にまだ生存している場合は、後方での移動・輸送中の事故として記録する。
+  die('事故')
+}
+function endMonth(){ui.phase='turn';
+ if(H.sp==1){if(H.hosp>0)H.hosp--;if(H.train>0)H.train--;H.served++;
+  if(H.ev&&!H.hosp&&!H.pow){if(R.c(.3))chg({精神:-1});if(R.c(.2)&&(H.ym%12>9||H.ym%12<3))chg({健康:-1})}
+  H.comp.forEach(c=>{if(c.s=='wounded'&&R.c(.4))c.s='ok'});famUpdate();
+  let ok=H.fam.filter(m=>m.alive&&m.res!='occ');if(ok.length&&R.c(.6)&&!R.c(.1)){let m=R.p(ok);H.letters.push({f:m,at:H.ym+R.p([0,0,0,1,2])+(m.res=='sg'?1:0),w:R.i(1,4),dl:0,rp:0})}
+  if(prog())return;if(H.pow&&R.c(.08)){H.pow=false;L('収容所を脱し、部隊に復帰した。')}
+  if(H.ym>=H.deathAt){deadlineDeath();return}
+  H.ym++;assign()}
+ else for(let i=0;i<H.sp;i++){famUpdate();H.ym++}
+ beginMonth()}
+function famUpdate(){let t=H.ym,F=CFG.fam.value;H.fam.forEach(m=>{if(!m.alive)return;let s='home';if(H.rk=='west'&&t>=Y(1941,7)&&t<=Y(1944,7))s='occ';if(H.rk=='leningrad'&&t>=Y(1941,9)&&t<=Y(1944,1))s='sg';if(H.fe&&s!='home')s='evac';m.res=s;
+ let p=s=='occ'?F.occ:s=='sg'?F.sg*(t>=Y(1941,12)&&t<=Y(1942,4)?2:1):s=='evac'?F.evac:F.base;if(R.c(p)){m.alive=false;m.rep=H.stg<3;if(H.stg<3)L(`${m.rel}が亡くなった。`+chg({精神:-3}),'x')}})}
+function assign(){if(H.pow||H.hosp>0)return;let act=active(H.ym);if(H.ev&&act.includes(H.ev)&&!R.c(.06))return;H.ev=null;if(H.train>0||!act.length||R.c(.15))return;
+ let e=R.w(act.map(x=>[x,x.d]));H.ev=e;H.jx=R.i(-4,4);H.jy=R.i(-4,4);H.loc=Math.max(1,Math.min(10,e.l+R.i(-1,1)));if(H.comp.filter(c=>c.s=='ok').length<3&&R.c(.5))H.comp.push(mkComp());
+ L(`<b>${e.n}</b>の戦域に配置された。`);if(e.maj&&!H.seen[e.id]){H.seen[e.id]=1;H.battleCount++;Q.push({g:'戦',h:e.n,t:`${H.nm}の隊は${e.n}の戦域に入った。${e.t}`})}}
+/* ===== 重大イベント（オーバーレイ） ===== */
+function flush(){if(ui.phase==='ended'||!Q.length)return;let o=Q.shift();if(ui.phase!=='paused'){ui.prev=ui.phase;ui.phase='paused';clearInterval(ui.tm)}
+ $('ovb').innerHTML=`<div class="g">${o.g}</div><h2>${o.h}</h2><p>${o.t}${o.d?chg(o.d):''}</p><button onclick="cls()">確認</button>`;$('ov').style.display='flex'}
+function cls(){$('ov').style.display='none';if(ui.cl){ui.cl=0;return}if(Q.length){flush();return}ui.phase=ui.prev;if(ui.phase==='progress')startTick()}
+/* ===== エンディング ===== */
+function srcHtml(){return Object.keys(CFG).map(k=>{let c=CFG[k];return`・[${TL[c.type]}] ${typeof c.value=='string'?c.value+'：':''}${c.note}（${c.source}）`}).join('<br>')+'<br>・参考：1939年ソ連国勢調査／Krivosheev編のソ連軍人的損失統計／B. Schechter “The Stuff of Soldiers”／Feskovらによる赤軍編制研究。数値は原典で再確認が必要。'}
+function ending(){clearInterval(ui.tm);ui.phase='ended';Q=[];ui.hold=false;$('pz').style.display='none';$('cs').style.display='none';$('ch').innerHTML='<small>記録は終了した。</small>';
+ let E=H.end,al=H.fam.filter(m=>m.alive),dc=H.comp.filter(c=>c.s=='dead').length,nx=active(H.ym+1)[0],lt=H.letters.find(l=>!l.dl&&l.f.alive),ld=H.letters.filter(l=>l.dl).pop(),ev=Object.keys(H.seen).map(i=>W.find(x=>x.id==i).n);
+ let ds=`${Math.floor(E.ym/12)}年${E.ym%12+1}月${E.d}日`;
+ ui.pg=[`<div class="g">記</div><h2>① 死亡の記録</h2><div class="rc">氏名：${H.nm}<br>生年月日：${H.by}年${H.bm}月${H.bd}日<br>死亡年月日：${ds}<br>事前設定された死亡期限：${dstr(H.deathAt)}<br>死亡場所：${E.pl}<br>死亡原因：${E.cat}（${E.hw.replace(/、死亡した$|死亡した$/,'').replace(/により$/,'')}）<br>関係した兵器・装備：${E.wp||'なし'}${E.side?`（${E.side}）`:''}<br>最終階級・所属：${RK[H.rank]}・${H.br||'未配属'}</div><p>${E.txt}</p>`,
+ `<h2>② 一人分の人生の記録</h2><p>${H.by}年${H.bm}月、${H.rn}に${H.eth}の子として生まれた。${H.edu}。性格は${H.pers}で、${H.job}として暮らした。家族は${H.fam.map(m=>m.rel).join('・')||'なし'}。${dstr(H.enl)}に召集され、${H.br}として従軍した。${ev.length?'加わった主な戦い：'+ev.join('、')+'。':''}個人戦果は敵兵${H.kills}、戦車・装甲車${H.tanks}、航空機${H.aircraft}。負傷${H.lw+H.hw}回${H.il?'、病気'+H.il+'回':''}${H.wp?'、捕虜の経験':''}。仲間のうち${dc}人が戦死した。</p>`,
+ `<h2>③ 届かなかった手紙</h2><p>${lt?`死の後に、${lt.f.rel}からの手紙が出された。「${R.p(LT.n)}」。宛先の本人は、もういなかった。`:ld?`最後に届いた手紙は、${ld.f.rel}からのものだった。「${ld.tx}」`:al.length?`${al[0].rel}は手紙を書いた。「${R.p(LT.n)}」。それは本人には届かなかった。`:'手紙を待つ者は、もういなかった。'}</p>`,
+ `<h2>④ 残された人々</h2><p>${al.length?al.map(m=>m.rel+'は'+(m.res=='occ'?'占領下で':m.res=='sg'?'包囲下で':m.res=='evac'?'避難先で':'')+'暮らしを続けた').join('。')+'。悲しみを抱えたまま、翌日も日常は続いた。':'故郷の家に、待つ者はもう残っていなかった。'}</p><p><small>${H.comp.map(c=>c.n+'（'+{ok:'隊に残った',wounded:'後送された',moved:'転属した',dead:'戦死した'}[c.s]+'）').join('、')}。その後の消息は、記録に残っていない。</small></p>`,
+ `<h2>⑤ 世界は続く</h2><p>${dstr(H.ym+1)}。${nx?nx.t:'戦争は続いていた。'}${H.ym<Y(1945,5)?'ヨーロッパでの戦争が終わるのは、1945年5月のことである。':'戦争は終わりを迎えたが、各地の死者の記録はその後も続いた。'}</p>`,
+ `<h2>⑥ 終わらない人数</h2><p>この記録は、数えきれない記録の一つにすぎない。${CFG.loss.value}（推定。出典は要再確認）。</p><div class="rc"><b>軍歴比較用の記録</b><br>戦果：敵兵 ${H.kills}／戦車・装甲車 ${H.tanks}／航空機 ${H.aircraft}<br>最終階級：${RK[H.rank]}<br>所属兵科：${H.br||'未配属'}<br>主な参加戦闘：${ev.join('、')||'記録なし'}<br><button onclick="shareRecord()">軍歴をコピー</button></div><button onclick="reviewLog()">ログで人生を振り返る</button><button onclick="start()">新しい主人公で始める</button><button onclick="title()">タイトルへ戻る</button><details><summary>出典と数値の区別</summary>${srcHtml()}</details>`];
+ ui.es=0;endPage()}
+function endPage(){if(ui.phase!=='ended')return;$('ovb').innerHTML=ui.pg[ui.es]+(ui.es<ui.pg.length-1?'<button onclick="nextPg()">次へ</button>':'');$('ov').style.display='flex'}
+function nextPg(){if(ui.phase==='ended'&&ui.es<ui.pg.length-1){ui.es++;endPage()}}
+function shareRecord(){
+  let ev=Object.keys(H.seen).map(i=>W.find(x=>x.id==i).n);
+  let txt=`${H.nm}／最終階級：${RK[H.rank]}／兵科：${H.br||'未配属'}
+戦果：敵兵${H.kills}・戦車等${H.tanks}・航空機${H.aircraft}
+参加した戦い：${ev.join('、')||'記録なし'}
+死亡：${dstr(H.end.ym)} ${H.end.cat}`;
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(()=>alert('軍歴をコピーしました。')).catch(()=>prompt('この記録をコピーしてください',txt))}else prompt('この記録をコピーしてください',txt)
+}
+function reviewLog(){$('ov').style.display='none';$('ch').innerHTML='<button onclick="ui.es=0;endPage()">結末の記録をもう一度見る</button><button onclick="start()">新しい主人公で始める</button><button onclick="title()">タイトルへ戻る</button>'}
+function title(){clearInterval(ui.tm);ui={phase:'title',done:{},hold:false};H=null;Q=[];['ov','cs','pz'].forEach(i=>$(i).style.display='none');$('log').innerHTML=INTRO;$('ch').innerHTML=TB;$('dt').textContent='—';$('who').textContent='';$('loc').textContent='';$('st').innerHTML='';$('dot').setAttribute('cx',-9)}
+function fail(e){clearInterval(ui.tm);$('ov').style.display='none';$('ch').innerHTML=`<small>エラーが発生しました：${e.message||e}</small><button onclick="start()">新しい主人公で始める</button>`}
+window.onerror=m=>fail({message:m});
+/* ===== タイトル ===== */
+H=null;
+$('log').innerHTML='<div class="e"><b>この人物は、第二次世界大戦の時代を生き、やがて命を落とす。</b><br><br>それが何年のことなのか、どこで起こるのかは、まだ誰にも分からない。<br><br>これは、一人の人間が生まれ、成長し、戦争に巻き込まれ、やがて命を落とすまでの記録である。</div>';
+$('map').innerHTML='<polygon points="30,70 55,55 80,40 130,30 200,22 280,20 350,28 390,45 385,80 370,105 340,120 310,130 280,125 250,135 225,150 195,150 165,140 130,135 100,120 75,110 50,100 35,90" fill="#33362a" stroke="#6d7157" stroke-width=".6" stroke-opacity=".6"/>'+Object.entries({レニングラード:[95,42],モスクワ:[120,70],スターリングラード:[150,112],キーウ:[80,100],ミンスク:[70,72]}).map(([n,q])=>`<text x="${q[0]+4}" y="${q[1]}" font-size="6" fill="#8a876f">${n}</text>`).join('')+'<text x="8" y="165" font-size="6" fill="#8a876f">ソ連（概略図・国境は目安）</text><circle id="dot" r="4.5" cx="-9" cy="-9" fill="#999" stroke="#000" stroke-width=".8"/>';
+function showSrc(){ui.cl=1;$('ovb').innerHTML='<h2>出典と数値の区別</h2><p style="font-size:13px">'+srcHtml()+'</p><button onclick="cls()">閉じる</button>';$('ov').style.display='flex'}
+$('ch').innerHTML='<button onclick="start()">この人物の人生を始める<small>誕生から最期まで。幼少期から人生を進める。従軍中は約8秒で一か月が過ぎる。セーブはできない。</small></button><button onclick="showSrc()">出典と数値の区別</button>';
+const INTRO=$('log').innerHTML,TB=$('ch').innerHTML;
+</script></body></html>
